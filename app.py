@@ -1,3 +1,6 @@
+#added date till 10 you might need to look into it
+
+
 from flask import Flask, jsonify, send_from_directory
 import threading
 import pandas as pd
@@ -23,7 +26,7 @@ BASE_DIR = os.path.abspath(r'C:\Users\katka\Downloads\models_forex')
 NEWS_CSV_PATH = os.path.join(BASE_DIR, 'news1-Copy.csv')
 BASE_URL = "https://newsapi.org/v2/everything"
 API_KEY = 'cb0e07a51f4a405590d9e324f6e3b309'
-SEQUENCE_LEN = 15
+SEQUENCE_LEN = 20
 
 #lexicon Patching
 def load_custom_lexicon(file_path):
@@ -37,17 +40,15 @@ def load_custom_lexicon(file_path):
     return lexicon
 
 
-# Initialize Flask app
 app = Flask(__name__, static_folder=BASE_DIR, static_url_path='')
 
 predicted_data = []
 
-# Load models
 model = load_model(os.path.join(BASE_DIR, "USD_Price_Forecst_Model_many_curr_sentiment_SA.h5"))
 scaler = joblib.load(os.path.join(BASE_DIR, "input_scaler_many_curr_setiment_SA.save"))
 target_scaler = joblib.load(os.path.join(BASE_DIR, "output_scaler_many_curr_sentiment_SA.save"))
 
-# Load and prepare historical data
+
 df = pd.read_csv(os.path.join(BASE_DIR, 'USD_INR Historical Data (1).csv'))
 
 df['Date'] = pd.to_datetime(df['Date'], dayfirst=True)
@@ -55,7 +56,7 @@ df['Change %'] = df['Change %'].str.replace('%', '').astype(float)
 
 df['Sentiment'] = 0.0
 
-# Scale sentiment for historical data
+
 for idx, row in df.iterrows():
     change = max(min(row['Change %'], 1), -1)
     base = (change / 1) * 0.3
@@ -64,18 +65,15 @@ for idx, row in df.iterrows():
     df.at[idx, 'Sentiment'] = scaled_sentiment
 
 analyzer = SentimentIntensityAnalyzer()
-#updating the lexicon patch
 finance_lexicon = load_custom_lexicon("finance_lexicon.txt")
 analyzer.lexicon.update(finance_lexicon)
 
 
-# Create/load news CSV
 if not os.path.exists(NEWS_CSV_PATH):
     with open(NEWS_CSV_PATH, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         writer.writerow(['publishedAt', 'title', 'source'])
 
-# Load existing news data
 news_df = pd.read_csv(NEWS_CSV_PATH)
 if len(news_df) > 0:
     news_df['publishedAt'] = pd.to_datetime(news_df['publishedAt']).dt.date
@@ -111,7 +109,6 @@ for idx in df.head(15).index:
     avg_sentiment = round(np.mean(sentiments), 3) if sentiments else 0.0
     df.at[idx, 'Sentiment'] = avg_sentiment
 
-# Reverse and prepare rolling dataframe
 df = df[::-1].reset_index(drop=True)
 
 rolling_df = df[['Date', 'Price', 'Change %', 'Sentiment']].copy()
@@ -150,22 +147,20 @@ def prediction_loop():
         rolling_df['price_pct'] = rolling_df['Price'].pct_change()
         rolling_df['rolling_mean_3'] = rolling_df['Price'].rolling(3).mean()
         rolling_df['volatility_3'] = rolling_df['Price'].rolling(3).std()
-        rolling_df['euro'] = rolling_df['Price'] * 0.00999962
-        rolling_df['pound'] = rolling_df['Price'] * 0.008527
-        rolling_df['yen'] = rolling_df['Price'] * 1.69146
+        rolling_df['euro'] = eur1['Price'].iloc[-1]
+        rolling_df['pound'] = gbp1['Price'].iloc[-1]
+        rolling_df['yen'] = jpy1['Price'].iloc[-1]
         
         feature_cols = ['Price', 'day_of_week', 'month', 'Change %', 'Sentiment', 
                         'delta_price', 'price_pct', 'rolling_mean_3', 'volatility_3',
                         'euro', 'pound', 'yen']
         
-        # Clean data and check length
         rolling_df = rolling_df.dropna()
         
         if len(rolling_df) < SEQUENCE_LEN:
             print(f"[ERROR] Insufficient data: {len(rolling_df)} < {SEQUENCE_LEN}")
             break
         
-        # Get latest sequence and make prediction
         latest_sequence = rolling_df[feature_cols].tail(SEQUENCE_LEN)
         latest_scaled = scaler.transform(latest_sequence)
         latest_scaled = np.expand_dims(latest_scaled, axis=0)
@@ -174,7 +169,6 @@ def prediction_loop():
         change_scaled = model.predict(latest_scaled)
         predicted_change = target_scaler.inverse_transform(change_scaled)[0][0]
         
-        # Get last row data
         last_row = rolling_df.iloc[-1]
         last_price = last_row['Price']
         next_date = last_row['Date'] + timedelta(days=1)
@@ -184,7 +178,6 @@ def prediction_loop():
         last_pound = last_row['pound']
         last_yen = last_row['yen']
         
-        # Calculate new currency values
         
         jpy1, change_jpy, new_price_jpy,prev_price_jpy = forecast_prices_noloop(jpy1, model_name="JPY_Price_Forecst_Model")
         gbp1, change_gbp, new_price_gbp,prev_price_gbp = forecast_prices_noloop(gbp1, model_name="GBP_Price_Forecst_Model")
@@ -196,7 +189,6 @@ def prediction_loop():
         
         
         
-                # Get currency values
         last_euro = prev_price_eur
         last_pound = prev_price_gbp
         last_yen = prev_price_jpy
@@ -281,7 +273,6 @@ def prediction_loop():
         
         print(f"[INFO] Calculated Sentiment {avg_sentiment:.3f} for date {date_str}")
         
-        # Create new row with all features
         new_row = {
             'Date': next_date,
             'Price': updated_price,
@@ -301,7 +292,7 @@ def prediction_loop():
         # Add new row to rolling_df
         rolling_df = pd.concat([rolling_df, pd.DataFrame([new_row])], ignore_index=True)
         print(rolling_df.tail(5))
-        # Calculate deviations and trends
+
         deviation = updated_price - last_price
         trend = "Increased" if deviation > 0 else "Decreased"
         
